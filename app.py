@@ -1,7 +1,11 @@
 import argparse
 from pathlib import Path
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 import gradio as gr
 import numpy as np
 from PIL import Image
@@ -21,15 +25,20 @@ def make_overlay(image: Image.Image, anomaly_map: np.ndarray):
     high = float(anomaly_map.max())
 
     if high > low:
-        normalized = (
-            (anomaly_map - low) / (high - low) * 255
-        ).astype(np.uint8)
+        norm = (anomaly_map - low) / (high - low)
     else:
-        normalized = np.zeros_like(anomaly_map, dtype=np.uint8)
+        norm = np.zeros_like(anomaly_map, dtype=np.float32)
 
-    heatmap = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
-    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-    overlay = cv2.addWeighted(original, 0.62, heatmap, 0.38, 0)
+    if cv2 is not None:
+        normalized = (norm * 255).astype(np.uint8)
+        heatmap = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
+        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+        overlay = cv2.addWeighted(original, 0.62, heatmap, 0.38, 0)
+    else:
+        from matplotlib import colormaps
+        cmap = colormaps["jet"]
+        heatmap = (cmap(norm)[:, :, :3] * 255).astype(np.uint8)
+        overlay = (original.astype(np.float32) * 0.62 + heatmap.astype(np.float32) * 0.38).astype(np.uint8)
 
     return Image.fromarray(overlay), Image.fromarray(heatmap)
 
@@ -98,6 +107,14 @@ def main():
 
         return overlay, heat, result
 
+    example_candidates = [
+        "data/mvtec_anomaly_detection/bottle/test/good/000.png",
+        "data/mvtec_anomaly_detection/bottle/test/broken_large/000.png",
+        "data/mvtec_anomaly_detection/bottle/test/broken_small/000.png",
+        "data/mvtec_anomaly_detection/bottle/test/contamination/000.png",
+    ]
+    examples = [img for img in example_candidates if Path(img).exists()]
+
     demo = gr.Interface(
         fn=predict,
         inputs=[
@@ -116,10 +133,10 @@ def main():
             "Upload a bottle image to inspect it for potential "
             "anomalies. The model was trained on normal bottle images."
         ),
-        examples=None,
+        examples=examples if examples else None,
     )
 
-    demo.launch(share=args.share)
+    demo.launch(share=args.share, inbrowser=True)
 
 
 if __name__ == "__main__":
